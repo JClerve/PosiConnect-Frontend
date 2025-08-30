@@ -1,5 +1,10 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import CreatePost from "./pages/CreatePost";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -12,7 +17,10 @@ import Communities from "./pages/Member.Communities";
 import ExpertCommunities from "./pages/Expert.Communities";
 import FindExperts from "./pages/FindExperts";
 import MemberRequests from "./pages/MemberRequests";
-
+import ExpertSession from "./components/Expert.Session";
+import ExpertMyDashboard from "./components/Expert.MyDashboard";
+import ExpertSessionEdit from "./components/Expert.SessionEdit";
+import SessionsUpcoming from "./pages/SessionsUpcoming";
 
 function App() {
   return (
@@ -23,30 +31,27 @@ function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
-        
+
         {/* Protected member routes */}
 
-         <Route 
-          path="/" 
-          element={<Navigate to="/login" replace />} 
-        />
-        <Route 
-          path="/dashboard" 
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route
+          path="/dashboard"
           element={
             <ProtectedRoute requiredRole="member">
               <MemberDashboard />
             </ProtectedRoute>
-          } 
+          }
         />
-        
+
         {/* Communities routes for members */}
-        <Route 
-          path="/communities" 
+        <Route
+          path="/communities"
           element={
             <ProtectedRoute requiredRole="member">
               <Communities />
             </ProtectedRoute>
-          } 
+          }
         />
         {/* Create Post route for members */}
         <Route
@@ -57,46 +62,67 @@ function App() {
             </ProtectedRoute>
           }
         />
-        
+
         {/* Protected expert routes */}
-        <Route 
-          path="/expert-dashboard" 
+        <Route
+          path="/expert-dashboard"
           element={
             <ProtectedRoute requiredRole="expert">
               <ExpertDashboard />
             </ProtectedRoute>
-          } 
+          }
         />
-        
+        <Route
+          path="/expert/dashboard"
+          element={
+            <ProtectedRoute requiredRole="expert">
+              <ExpertMyDashboard />
+            </ProtectedRoute>
+          }
+        />
+
         {/* Communities routes for experts */}
-        <Route 
-          path="/expert/communities" 
+        <Route
+          path="/expert/communities"
           element={
             <ProtectedRoute requiredRole="expert">
               <ExpertCommunities />
             </ProtectedRoute>
-          } 
+          }
         />
-        
+
         {/* Member requests routes for experts */}
-        <Route 
-          path="/expert/member-requests/:tab" 
+        <Route
+          path="/expert/member-requests/:tab"
           element={
             <ProtectedRoute requiredRole="expert">
               <MemberRequests />
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/expert/member-requests" 
+        <Route
+          path="/expert/member-requests"
           element={
             <ProtectedRoute requiredRole="expert">
               <MemberRequests />
             </ProtectedRoute>
-          } 
+          }
         />
         <Route path="/find-experts" element={<FindExperts />} />
-        <Route path="/experts" element={<Navigate to="/find-experts" replace />} />
+        <Route
+          path="/experts"
+          element={<Navigate to="/find-experts" replace />}
+        />
+        <Route path="/expert/create-session" element={<ExpertSession />} />
+        <Route
+          path="/expert/session/edit/:id"
+          element={
+            <ProtectedRoute requiredRole="expert">
+              <ExpertSessionEdit />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/sessions/upcoming" element={<SessionsUpcoming />} />
       </Routes>
     </Router>
   );
