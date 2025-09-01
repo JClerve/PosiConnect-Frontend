@@ -7,18 +7,36 @@ import {
   Avatar,
   Grid,
   CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Alert,
 } from "@mui/material";
 import Header from "../components/Header";
 import MemberSidebar from "../components/Member.Sidebar";
 import api from "../utils/api";
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
+
+const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLIC_KEY);
 
 const SessionsUpcoming = () => {
   const [openSidebar, setOpenSidebar] = useState(true);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [joining, setJoining] = useState({});
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState(null); // {clientSecret, publishableKey}
+  const [currentSession, setCurrentSession] = useState(null);
+  const [paymentError, setPaymentError] = useState(null);
   const navigate = useNavigate();
 
   // format numbers as USD (fallback to provided currency if present)
@@ -50,20 +68,157 @@ const SessionsUpcoming = () => {
     }
   };
 
-  const handleJoin = async (sessionId) => {
+  // New: when Join clicked, create PaymentIntent (unless free) and open modal
+  const handleJoin = async (session) => {
+    const sessionId = session._id;
+    // If free, just call existing join API
+    const price = session.price || 0;
+    if (!price || price === 0) {
+      setJoining((s) => ({ ...s, [sessionId]: true }));
+      try {
+        await api.post(`/sessions/member/${sessionId}/join`);
+        setSessions((prev) =>
+          prev.map((p) => (p._id === sessionId ? { ...p, joined: true } : p))
+        );
+      } catch (err) {
+        console.error("Join failed", err);
+      } finally {
+        setJoining((s) => ({ ...s, [sessionId]: false }));
+      }
+      return;
+    }
+
     setJoining((s) => ({ ...s, [sessionId]: true }));
     try {
-      await api.post(`/sessions/member/${sessionId}/join`);
-      // mark locally as joined (optimistic)
-      setSessions((prev) =>
-        prev.map((p) => (p._id === sessionId ? { ...p, joined: true } : p))
-      );
+      const res = await api.post("/payments/create-payment-intent", {
+        amount: price,
+        currency: (session.currency || "usd").toLowerCase(),
+        sessionId,
+      });
+      const { clientSecret, publishableKey } = res.data;
+      setPaymentOptions({ clientSecret, publishableKey });
+      setCurrentSession(session);
+      setPaymentError(null);
+      setPaymentOpen(true);
     } catch (err) {
-      console.error("Join failed", err);
-      // optionally show toast
+      console.error("Failed to create payment intent", err);
     } finally {
       setJoining((s) => ({ ...s, [sessionId]: false }));
     }
+  };
+
+  // PaymentModal component with proper Elements context wrapping
+  const PaymentModal = ({ open, onClose, options, session }) => {
+    if (!options || !options.clientSecret) return null;
+
+    const appearance = { theme: "stripe" };
+    const elementsOptions = { clientSecret: options.clientSecret, appearance };
+
+    return (
+      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+        <DialogTitle>Pay for session: {session?.heading}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <Elements options={elementsOptions} stripe={stripePromise}>
+              <PaymentForm
+                session={session}
+                onClose={onClose}
+                clientSecret={options.clientSecret} // Pass clientSecret as prop
+              />
+            </Elements>
+          </Box>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  // Fixed PaymentForm component - receives clientSecret as prop
+  const PaymentForm = ({ session, onClose, clientSecret }) => {
+    const stripe = useStripe();
+    const elements = useElements();
+    const [processing, setProcessing] = useState(false);
+    const [localError, setLocalError] = useState(null);
+
+    const handleSubmitPayment = async () => {
+      setProcessing(true);
+      setLocalError(null);
+
+      if (!stripe || !elements) {
+        setLocalError("Stripe has not loaded yet.");
+        setProcessing(false);
+        return;
+      }
+
+      try {
+        const { error, paymentIntent } = await stripe.confirmPayment({
+          elements,
+          redirect: "if_required",
+        });
+
+        if (error) {
+          setLocalError(error.message || "Payment failed");
+          setProcessing(false);
+          return;
+        }
+
+        // Use the clientSecret prop instead of options.clientSecret
+        const pi =
+          paymentIntent || (await stripe.retrievePaymentIntent(clientSecret));
+
+        if (pi && pi.status === "succeeded") {
+          // record server-side
+          await api.post("/payments/record", {
+            paymentIntentId: pi.id,
+            sessionId: session._id,
+          });
+
+          // also call join endpoint to add member to session participants
+          try {
+            await api.post(`/sessions/member/${session._id}/join`);
+          } catch (err) {
+            // non-fatal: we still proceed
+            console.warn("Failed to join session after payment:", err);
+          }
+
+          // update local UI: mark joined
+          setSessions((prev) =>
+            prev.map((p) =>
+              p._id === session._id ? { ...p, joined: true } : p
+            )
+          );
+
+          onClose();
+        } else {
+          setLocalError("Payment not completed. Status: " + (pi && pi.status));
+        }
+      } catch (err) {
+        console.error("confirmPayment error:", err);
+        setLocalError("Payment confirmation failed");
+      } finally {
+        setProcessing(false);
+      }
+    };
+
+    return (
+      <>
+        {localError && <Alert severity="error">{localError}</Alert>}
+        <PaymentElement />
+        <DialogActions>
+          <Button onClick={onClose} disabled={processing}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSubmitPayment}
+            disabled={processing || !stripe}
+          >
+            {processing
+              ? "Processing..."
+              : `Pay ${formatUSD(session?.price, session?.currency || "USD")}`}
+          </Button>
+        </DialogActions>
+      </>
+    );
   };
 
   return (
@@ -112,7 +267,6 @@ const SessionsUpcoming = () => {
                     (p) => p === /* string id */ undefined
                   )) ||
                 false;
-              // simple local joined check: server returns joined participants but we mark optimistically
 
               return (
                 <Grid item xs={12} md={6} key={s._id}>
@@ -142,7 +296,7 @@ const SessionsUpcoming = () => {
                       <Button
                         variant={isJoined ? "contained" : "outlined"}
                         color="primary"
-                        onClick={() => handleJoin(s._id)}
+                        onClick={() => handleJoin(s)}
                         disabled={joining[s._id] || isJoined}
                       >
                         {joining[s._id]
@@ -157,6 +311,20 @@ const SessionsUpcoming = () => {
               );
             })}
           </Grid>
+        )}
+
+        {/* Payment modal */}
+        {paymentOptions && currentSession && (
+          <PaymentModal
+            open={paymentOpen}
+            onClose={() => {
+              setPaymentOpen(false);
+              setPaymentOptions(null);
+              setCurrentSession(null);
+            }}
+            options={paymentOptions}
+            session={currentSession}
+          />
         )}
       </Box>
     </>
